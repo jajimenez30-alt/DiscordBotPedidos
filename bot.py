@@ -7,6 +7,30 @@ from pymongo import MongoClient
 from bson.objectid import ObjectId
 from discord import SelectOption, SelectMenu, Interaction, app_commands
 from functools import partial
+import threading
+import http.server
+import socketserver
+
+# Función que abre un puerto HTTP temporal para satisfacer a Render
+def keep_alive():
+    PORT = 10000 
+    
+    # Simple servidor HTTP que no hace nada
+    Handler = http.server.SimpleHTTPRequestHandler
+    
+    # Este proceso se ejecuta en un hilo para no bloquear el bot de Discord
+    try:
+        with socketserver.TCPServer(("", PORT), Handler) as httpd:
+            print(f"DEBUG: Servidor web temporal activo en el puerto {PORT}")
+            httpd.serve_forever()
+    except Exception as e:
+        print(f"DEBUG: Falló la apertura del puerto {PORT}: {e}")
+        pass # Permitimos que falle sin detener el bot
+
+# Iniciamos el servidor web temporal en un hilo de Python
+def start_web_server():
+    t = threading.Thread(target=keep_alive)
+    t.start()
 
 # --- 1. CARGAR CREDENCIALES ---
 load_dotenv()
