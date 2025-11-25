@@ -617,7 +617,7 @@ class OrderModal(discord.ui.Modal, title='Detalles Finales del Pedido'):
 
 # --- CONFIGURACIÓN DE ROLES DE GESTIÓN ---
 MANAGEMENT_ROLES = [
-    "Sastre Maestro", "Peletero Maestro", "Herrero Maestro", "Alquimista Maestro", "Cocinero Maestro",
+    "Sastre Maestro", "Peletero Maestro", "Herrero Maestro", "Alquimista Maestro", "Cocinero Maestro", "Joyero Maestro", "Joyero",
     "Sastre", "Peletero", "Herrero", "Alquimista", "Cocinero"
 ]
 
