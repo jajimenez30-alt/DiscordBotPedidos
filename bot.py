@@ -616,7 +616,7 @@ class OrderModal(discord.ui.Modal, title='Detalles Finales del Pedido'):
 # --- CONFIGURACIÓN DE ROLES DE GESTIÓN ---
 MANAGEMENT_ROLES = [
     "Sastre Maestro", "Peletero Maestro", "Herrero Maestro", "Alquimista Maestro", "Cocinero Maestro", "Joyero Maestro",
-    "Sastre", "Peletero", "Herrero", "Alquimista", "Cocinero", "Joyero"
+    "Sastre", "Peletero", "Herrero", "Alquimista", "Cocinero", "Joyero", "Rey"
 ]
 
 def get_profession_from_role(role_name):
@@ -1105,7 +1105,7 @@ async def complete_order_command(interaction: discord.Interaction, pedido_id: st
     item_name="Nombre del ítem (se muestran todas las recetas).",
     cantidad="Cantidad a agregar (número entero positivo)."
 )
-@app_commands.autocomplete(item_name=inventory_item_autocomplete) # 🟢 CORRECCIÓN: Usa el autocompletado de TODAS las recetas
+@app_commands.autocomplete(item_name=inventory_stock_autocomplete) # 🟢 CORRECCIÓN: Usa el autocompletado de TODAS las recetas
 @app_commands.checks.has_any_role(*MANAGEMENT_ROLES)
 async def add_inventory_command(interaction: discord.Interaction, item_name: str, cantidad: int):
     
@@ -1241,7 +1241,7 @@ async def view_inventory_error(interaction: discord.Interaction, error: app_comm
     item_name="Ítem del inventario para actualizar.",
     cantidad="El número TOTAL que tiene el inventario ahora."
 )
-@app_commands.autocomplete(item_name=inventory_item_autocomplete) # 🟢 CORRECCIÓN: Usa el autocompletado de TODAS las recetas
+@app_commands.autocomplete(item_name=inventory_stock_autocomplete) 
 @app_commands.checks.has_any_role(*MANAGEMENT_ROLES)
 async def set_inventory_command(interaction: discord.Interaction, item_name: str, cantidad: int):
     
