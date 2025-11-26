@@ -22,7 +22,7 @@ try:
     usuarios_col = db["Usuario"]
     items_col = db["Item"]
     pedidos_col = db["Pedido"]
-    inventario_col = db["inventario"] # <-- ¡ASEGÚRATE DE QUE EXISTA ESTA LÍNEA!
+    inventario_col = db["inventario"]
     
     print("Conexión a MongoDB exitosa. Colecciones listas.")
     
@@ -143,6 +143,18 @@ def get_inventory_stock_names(search_query):
     except Exception as e:
         print(f"ERROR DE MONGO (get_inventory_stock_names): {e}")
         return []
+
+async def inventory_stock_autocomplete(interaction: discord.Interaction, current: str):
+    # Ejecuta la búsqueda de ítems en STOCK (inventario_col)
+    item_names = await bot.loop.run_in_executor(
+        None,
+        partial(get_inventory_stock_names, current)
+    )
+    
+    return [
+        app_commands.Choice(name=name, value=name)
+        for name in item_names
+    ]
 
 # Función que se ejecuta cuando el usuario selecciona el Nombre del Ítem (Paso 3)
 async def item_name_select_callback(interaction: discord.Interaction):
@@ -363,7 +375,7 @@ async def artisan_autocomplete(interaction: discord.Interaction, current: str):
 
     # 2. Determinar el rol de Subdito esperado
     # Ej: Si Maestro es Sastrería, el Subdito es 'Sastre'
-    subdito_role_name = next((key for key, value in {'Sastre': 'Sastrería', 'Peletero': 'Peletería', 'Herrero': 'Herrería', 'Alquimista': 'Alquimia', 'Cocinero': 'Cocina', "Joyero" : "Joyero" }.items() if value == maestro_profession), None)
+    subdito_role_name = next((key for key, value in {'Sastre': 'Sastrería', 'Peletero': 'Peletería', 'Herrero': 'Herrería', 'Alquimista': 'Alquimia', 'Cocinero': 'Cocina'}.items() if value == maestro_profession), None)
     
     if not subdito_role_name:
         return []
@@ -391,30 +403,6 @@ def get_full_inventory():
     except Exception as e:
         print(f"ERROR DE MONGO (get_full_inventory): {e}")
         return []
-
-def set_inventory_quantity(item_name, new_quantity):
-    """
-    Establece la cantidad de un ítem en el inventario al valor exacto (new_quantity).
-    Si new_quantity es <= 0, el ítem se elimina del inventario.
-    """
-    try:
-        if new_quantity <= 0:
-            # Si la cantidad es cero o negativa, eliminamos el ítem para limpiar el inventario
-            inventario_col.delete_one({"name": item_name})
-            return "DELETED"
-            
-        # 🟢 CORRECCIÓN: Usamos $set para reemplazar el valor de 'quantity'
-        inventario_col.update_one(
-            {"name": item_name},
-            {"$set": {"quantity": new_quantity}},
-            upsert=True # Si el ítem no existe (aunque no debería pasar con el autocomplete), lo crea.
-        )
-        
-        return "SUCCESS"
-
-    except Exception as e:
-        print(f"ERROR DE MONGO (set_inventory_quantity): {e}")
-        return "ERROR"
 
 # ==============================================================================
 # SECCIÓN 5: EVENTOS DE DISCORD
@@ -620,18 +608,27 @@ MANAGEMENT_ROLES = [
     "Sastre Maestro", "Peletero Maestro", "Herrero Maestro", "Alquimista Maestro", "Cocinero Maestro", "Joyero Maestro",
     "Sastre", "Peletero", "Herrero", "Alquimista", "Cocinero", "Joyero"
 ]
+PROFESSION_MAPPING = {
+    "Sastre": "Sastrería",
+    "Peletero": "Peletería",
+    "Herrero": "Herrería",
+    "Alquimista": "Alquimia",
+    "Cocinero": "Cocina",
+    "Joyero" : "Joyería"
+}
+# Define los Roles que serán Jefes de Oficio (¡AJUSTA ESTOS NOMBRES!)
+CHIEF_ROLES = ["Sastre Maestro", "Herrero Maestro", "Peletero Maestro", "Alquimista Maestro", "Cocinero Maestro", "Joyero Maestro"] 
 
 def get_profession_from_role(role_name):
     """
-    Simplifica el nombre del rol quitando ' Maestro' para obtener la profesión base.
-    Ej: 'Peletero Maestro' -> 'Peletero'
+    Simplifica el nombre del rol quitando ' Maestro' para obtener la profesión base
+    y lo mapea al nombre completo de la profesión de la BD (Sastrería, Peletería, etc.).
     """
-    # Quitar " Maestro" para obtener el nombre base (ej: "Peletero")
+    # 1. Obtener el nombre base
     profession_base_name = role_name.replace(" Maestro", "").strip() 
-        
-    return profession_base_name
+    return PROFESSION_MAPPING.get(profession_base_name, profession_base_name)
 
-# --- COMANDO /verpedidos ---
+# --- COMANDO /VerPedidos ---
 @bot.tree.command(name="verpedidos", description="Muestra pedidos pendientes (Maestro) o asignados (Subdito).")
 @app_commands.checks.has_any_role(*MANAGEMENT_ROLES)
 async def view_orders_command(interaction: discord.Interaction):
@@ -695,8 +692,10 @@ async def view_orders_command(interaction: discord.Interaction):
         # El estatus
         current_status = order.get('estatus', 'N/A')
 
+        # 🟢 CORRECCIÓN EN EL VALOR DEL CAMPO
         field_value = (
-            f"**Cantidad:** {order['cantidad']} | **Nivel:** {order['level']} ({order['quality']})\n"
+            f"**Nombre:** {order['item_name']}\n"
+            f"**Cantidad:** {order['cantidad']} | **Nivel:** {order[ 'level']} ({order['quality']})\n" 
             f"**Solicitado por:** {solicitante_mention}\n"
         )
         
@@ -706,28 +705,19 @@ async def view_orders_command(interaction: discord.Interaction):
         else:
              field_value += f"**Estatus:** **{current_status}**"
         
-        # 1. Añadir el campo del Pedido
+        # 1. Añadir el campo del Pedido (Título solo con ID)
         embed.add_field(
-            name=f"ID: {order_id_visible} | {order['item_name']} ({order['quality']})",
+            name=f"ID: {order_id_visible}", # <-- Título más limpio
             value=field_value,
             inline=False
         )
         
-        # 2. AÑADIR SEPARADOR INVISIBLE
-        # El campo vacío 'inline=False' garantiza una línea de separación completa
-        embed.add_field(
-            name="\u200b", # Carácter de espacio invisible
-            value="---", # Puedes usar tres guiones para una línea visual ligera
-            inline=False 
-        )
-        
     await interaction.response.send_message(embed=embed, ephemeral=True) 
-
-# Manejo de error de roles para /verpedidos
+# Manejo de error de roles para /VerPedidos
 @view_orders_command.error
 async def view_orders_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.errors.MissingAnyRole):
-        await interaction.response.send_message("🔒 No tienes un rol de gestión de oficios para usar este comando.", ephemeral=True)
+        await interaction.response.send_message("🔒 No tienes el rol de Jefe de Oficio para usar este comando.", ephemeral=True)
 
 # --- /Ping ---
 @bot.tree.command(name="ping", description="Responde con Ping y verifica la BD.")
@@ -741,7 +731,7 @@ async def ping_command(interaction: discord.Interaction):
         
     await interaction.response.send_message(f"Pong! {db_status}", ephemeral=True)
 
-# --- /crearpedido ---
+# --- /CrearPedido ---
 @bot.tree.command(name="crearpedido", description="Inicia el proceso de creación de un pedido de crafteo.")
 async def create_order_command(interaction: discord.Interaction):
     
@@ -783,6 +773,7 @@ async def create_order_command(interaction: discord.Interaction):
         ephemeral=True 
     )
 
+# --- /MisPedidos ---
 @bot.tree.command(name="mispedidos", description="Muestra el estado de los pedidos que has solicitado.")
 async def my_orders_command(interaction: discord.Interaction):
     user_id = interaction.user.id
@@ -834,22 +825,12 @@ async def my_orders_command(interaction: discord.Interaction):
         
     await interaction.response.send_message(embed=embed, ephemeral=True) # ephemeral=True: Solo el usuario ve sus pedidos
 
-# Define los Roles que serán Jefes de Oficio (¡AJUSTA ESTOS NOMBRES!)
-CHIEF_ROLES = ["Sastre Maestro", "Herrero Maestro", "Peletero Maestro", "Alquimista Maestro", "Cocinero Maestro", "Joyero Maestro"] 
-
-# Manejo de error de roles para /verpedidos
-@view_orders_command.error
-async def view_orders_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.errors.MissingAnyRole):
-        await interaction.response.send_message("🔒 No tienes el rol de Jefe de Oficio para usar este comando.", ephemeral=True)
-
-# --- /asignar ---
-# --- COMANDO /asignar ---
-@bot.tree.command(name="asignar", description="Asigna un pedido a un artesano y cambia el estado.")
+# --- /AsignarPedido ---
+@bot.tree.command(name="asignarpedido", description="Asigna un pedido a un artesano y cambia el estado.")
 @app_commands.checks.has_any_role(*MANAGEMENT_ROLES) 
 @app_commands.autocomplete(artesano=artisan_autocomplete)
 @app_commands.describe(
-    pedido_id="El ID completo (24 caracteres) del pedido a asignar.", # Ahora es 24 caracteres
+    pedido_id="El ID completo (24 caracteres) del pedido a asignar.",
     artesano="El miembro de Discord que crafteará el ítem."
 )
 async def assign_order_command(interaction: discord.Interaction, pedido_id: str, artesano: str):
@@ -941,8 +922,8 @@ async def assign_order_command(interaction: discord.Interaction, pedido_id: str,
         # Notificamos al Maestro en privado si el DM falla
         await interaction.followup.send(f"⚠️ Advertencia: No pude enviar el DM de notificación a {member_to_assign.display_name}.", ephemeral=True)
 
-# --- COMANDO /recoger ---
-@bot.tree.command(name="recoger", description="Marca tu pedido como Entregado, confirmando la recepción del ítem.")
+# --- /RecogerPedido ---
+@bot.tree.command(name="recogerpedido", description="Marca tu pedido como Entregado, confirmando la recepción del ítem.")
 @app_commands.describe(pedido_id="El ID corto (primeros 8 caracteres) del pedido que deseas marcar como Entregado.")
 async def pickup_order_command(interaction: discord.Interaction, pedido_id: str):
     pedido_id = pedido_id.strip()    
@@ -984,8 +965,8 @@ async def pickup_order_command(interaction: discord.Interaction, pedido_id: str)
         ephemeral=False
     )
 
-# --- COMANDO /completar ---
-@bot.tree.command(name="completar", description="Marca un pedido como LISTO PARA RECOGER.")
+# --- /CompletarPedido ---
+@bot.tree.command(name="completarpedido", description="Marca un pedido como LISTO PARA RECOGER.")
 @app_commands.checks.has_any_role(*MANAGEMENT_ROLES)
 @app_commands.describe(
     pedido_id="El ID completo (24 caracteres) del pedido que has terminado."
@@ -1100,7 +1081,7 @@ async def complete_order_command(interaction: discord.Interaction, pedido_id: st
         print(f"Error al enviar DM al solicitante {solicitante_id}: {e}")
         # La interacción ya fue respondida, así que solo registramos el error
 
-# --- COMANDO /inventarioagregar ---
+# --- /InventarioAgregar ---
 @bot.tree.command(name="inventarioagregar", description="Agrega nuevos ítems o aumenta la cantidad de un ítem existente.")
 @app_commands.describe(
     item_name="Nombre del ítem (solo se muestran ítems con stock).",
@@ -1113,19 +1094,41 @@ async def add_inventory_command(interaction: discord.Interaction, item_name: str
     await interaction.response.defer(ephemeral=True)
     item_name_stripped = item_name.strip()
 
-    # NOTE: NO VALIDAMOS CONTRA items_col, SOLO ACEPTAMOS LO QUE ESTÁ EN INVENTARIO
-    
+    # 1. Validación de Cantidad (Ya existía)
     if cantidad <= 0:
         await interaction.followup.send("❌ Error: La cantidad debe ser mayor a cero para agregar.", ephemeral=True)
         return
 
-# --- COMANDO /inventarioretirar ---
+    # 2. 🟢 AGREGAR LA LÓGICA DE ACTUALIZACIÓN Y CONFIRMACIÓN (CORRECCIÓN VITAL)
+
+    # Ejecutar la actualización en un hilo de fondo con cantidad positiva
+    result = await bot.loop.run_in_executor(
+        None,
+        partial(update_inventory, item_name_stripped, cantidad) 
+    )
+
+    if result == "ERROR":
+        await interaction.followup.send("❌ Error: Fallo al actualizar el inventario.", ephemeral=True)
+        return
+        
+    # Buscamos el documento actualizado para obtener la cantidad total
+    final_doc = inventario_col.find_one({"name": item_name_stripped})
+    final_quantity = final_doc.get("quantity", 0)
+
+    await interaction.followup.send(
+        f"✅ Inventario Actualizado:\n"
+        f"Se agregaron **{cantidad}** de **{item_name_stripped}**.\n"
+        f"Cantidad total en stock: **{final_quantity}**.",
+        ephemeral=False
+    )
+
+# --- /InventarioRetirar ---
 @bot.tree.command(name="inventarioretirar", description="Retira una cantidad de un ítem existente del inventario.")
 @app_commands.describe(
     item_name="Nombre del ítem (se autocompleta si existe).",
     cantidad="Cantidad a retirar (debe ser un número entero positivo)."
 )
-@app_commands.autocomplete(item_name=inventory_stock_autocomplete) # Usa el mismo autocompletado
+@app_commands.autocomplete(item_name=inventory_stock_autocomplete)
 @app_commands.checks.has_any_role(*MANAGEMENT_ROLES)
 async def remove_inventory_command(interaction: discord.Interaction, item_name: str, cantidad: int):
     
@@ -1169,8 +1172,8 @@ async def remove_inventory_command(interaction: discord.Interaction, item_name: 
         ephemeral=False
     )
 
-# --- COMANDO /inventariover ---
-@bot.tree.command(name="verinventario", description="Muestra la lista completa de ítems en el inventario y sus cantidades.")
+# --- /InventarioVer ---
+@bot.tree.command(name="inventariover", description="Muestra la lista completa de ítems en el inventario y sus cantidades.")
 @app_commands.checks.has_any_role(*MANAGEMENT_ROLES)
 async def view_inventory_command(interaction: discord.Interaction):
     
@@ -1210,52 +1213,11 @@ async def view_inventory_command(interaction: discord.Interaction):
     # 3. Respuesta final
     await interaction.followup.send(embed=embed, ephemeral=False)
 
-# Manejo de error de roles para /verinventario (mantener igual)
+# Manejo de error de roles para /InventarioVer 
 @view_inventory_command.error
 async def view_inventory_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.errors.MissingAnyRole):
         await interaction.response.send_message("🔒 No tienes un rol de gestión de oficios para ver el inventario.", ephemeral=True)
-
-# --- COMANDO /setitem ---
-@bot.tree.command(name="setitem", description="Fija la cantidad total de un ítem en el inventario al valor exacto.")
-@app_commands.describe(
-    item_name="Ítem del inventario para actualizar.",
-    cantidad="El número TOTAL que tiene el inventario ahora."
-)
-@app_commands.autocomplete(item_name=inventory_stock_autocomplete)
-@app_commands.checks.has_any_role(*MANAGEMENT_ROLES)
-async def set_inventory_command(interaction: discord.Interaction, item_name: str, cantidad: int):
-    
-    await interaction.response.defer(ephemeral=True)
-    item_name_stripped = item_name.strip()
-
-    if cantidad < 0:
-        await interaction.followup.send("❌ Error: La cantidad no puede ser negativa. Usa 0 para eliminar el ítem.", ephemeral=True)
-        return
-    
-    # Ejecutar la actualización en un hilo de fondo
-    result = await bot.loop.run_in_executor(
-        None,
-        partial(set_inventory_quantity, item_name_stripped, cantidad)
-    )
-
-    if result == "ERROR":
-        await interaction.followup.send("❌ Error: Fallo al actualizar el inventario.", ephemeral=True)
-        return
-
-    # 3. Confirmar la acción
-    if result == "DELETED":
-        await interaction.followup.send(
-            f"✅ Inventario Actualizado:\n"
-            f"El ítem **{item_name_stripped}** ha sido **eliminado** del inventario (Cantidad fijada en 0 o menos).",
-            ephemeral=False
-        )
-    else:
-        await interaction.followup.send(
-            f"✅ Inventario Actualizado:\n"
-            f"La cantidad total de **{item_name_stripped}** se ha fijado en **{cantidad}**.",
-            ephemeral=False
-        )
 
 # --- 8. INICIAR EL BOT ---
 if DISCORD_TOKEN:

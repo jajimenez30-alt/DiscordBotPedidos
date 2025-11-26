@@ -1,0 +1,5 @@
+-- Activar modo Venv
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+py -m venv venv
+ Get-ChildItem -Path .\venv
+.\venv\Scripts\Activate.ps1

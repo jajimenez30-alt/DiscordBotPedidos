@@ -1,0 +1,131 @@
+{
+  "category": "Armadura",
+  "type": "Top",
+  "name": "Jubón del colmillo oculto del cazador",
+  "profession": "Peletero",
+  "variations": [
+    {
+      "level_name": "Lvl 2",
+      "quality_options": [
+        {
+          "quality_name": "Común",
+          "level_req": 8,
+          "materials": [
+            { "name": "Cuero de ante", "quantity": 12 },
+            { "name": "Cinto para armas", "quantity": 1 },
+            { "name": "Tachuelas de bronce", "quantity": 20 }
+          ]
+        },
+        {
+          "quality_name": "Poco Común",
+          "level_req": 11,
+          "materials": [
+            { "name": "Sigilo desgastado", "quantity": 12 },
+            { "name": "Mostaza", "quantity": 4 },
+            { "name": "Cuero de ante", "quantity": 12 },
+            { "name": "Cinto para armas", "quantity": 1 },
+            { "name": "Tachuelas de bronce", "quantity": 20 }
+          ]
+        },
+        {
+          "quality_name": "Rara",
+          "level_req": 12,
+          "materials": [
+            { "name": "Sigilo desgastado", "quantity": 12 },
+            { "name": "Sigilo majestuoso de Samalo", "quantity": 1 },
+            { "name": "Eléboro", "quantity": 10 },
+            { "name": "Cuero de ante", "quantity": 12 },
+            { "name": "Cinto para armas", "quantity": 1 },
+            { "name": "Tachuelas de bronce", "quantity": 20 }
+          ]
+        }
+      ]
+    },
+    {
+      "level_name": "Lvl 3",
+      "quality_options": [
+        {
+          "quality_name": "Común",
+          "level_req": 17,
+          "materials": [
+            { "name": "Cuero cocido", "quantity": 14 },
+            { "name": "Cinto para armas", "quantity": 1 },
+            { "name": "Tachuelas de bronce", "quantity": 40 },
+            { "name": "Acolchamiento de lino relleno", "quantity": 1 },
+            { "name": "Aceite de linaza", "quantity": 2 }
+          ]
+        },
+        {
+          "quality_name": "Poco Común",
+          "level_req": 20,
+          "materials": [
+            { "name": "Piedra rúnica tallada", "quantity": 12 },
+            { "name": "Tomillo", "quantity": 6 },
+            { "name": "Cuero cocido", "quantity": 14 },
+            { "name": "Cinto para armas", "quantity": 1 },
+            { "name": "Tachuelas de bronce", "quantity": 40 },
+            { "name": "Acolchamiento de lino relleno", "quantity": 1 },
+            { "name": "Aceite de linaza", "quantity": 2 }
+          ]
+        },
+        {
+          "quality_name": "Rara",
+          "level_req": 23,
+          "materials": [
+            { "name": "Piedra rúnica tallada", "quantity": 12 },
+            { "name": "Sigilo de Raderaf", "quantity": 1 },
+            { "name": "Eléboro", "quantity": 15 },
+            { "name": "Cuero cocido", "quantity": 14 },
+            { "name": "Cinto para armas", "quantity": 1 },
+            { "name": "Tachuelas de bronce", "quantity": 40 },
+            { "name": "Acolchamiento de lino relleno", "quantity": 1 },
+            { "name": "Aceite de linaza", "quantity": 2 }
+          ]
+        }
+      ]
+    },
+    {
+      "level_name": "Lvl 4",
+      "quality_options": [
+        {
+          "quality_name": "Común",
+          "level_req": 27,
+          "materials": [
+            { "name": "Cuero de grano superior mediano", "quantity": 16 },
+            { "name": "Cinto para armas", "quantity": 1 },
+            { "name": "Tachuelas de bronce", "quantity": 60 },
+            { "name": "Fieltro de lana", "quantity": 1 },
+            { "name": "Aceite de linaza", "quantity": 5 }
+          ]
+        },
+        {
+          "quality_name": "Poco Común",
+          "level_req": 30,
+          "materials": [
+            { "name": "Gusano hinchado", "quantity": 12 },
+            { "name": "Mandrágora", "quantity": 10 },
+            { "name": "Cuero de grano superior mediano", "quantity": 16 },
+            { "name": "Cinto para armas", "quantity": 1 },
+            { "name": "Tachuelas de bronce", "quantity": 60 },
+            { "name": "Fieltro de lana", "quantity": 1 },
+            { "name": "Aceite de linaza", "quantity": 5 }
+          ]
+        },
+        {
+          "quality_name": "Rara",
+          "level_req": 33,
+          "materials": [
+            { "name": "Gusano hinchado", "quantity": 12 },
+            { "name": "Sigilo majestuoso de Raderaf", "quantity": 1 },
+            { "name": "Eléboro", "quantity": 20 },
+            { "name": "Cuero de grano superior mediano", "quantity": 16 },
+            { "name": "Cinto para armas", "quantity": 1 },
+            { "name": "Tachuelas de bronce", "quantity": 60 },
+            { "name": "Fieltro de lana", "quantity": 1 },
+            { "name": "Aceite de linaza", "quantity": 5 }
+          ]
+        }
+      ]
+    }
+  ]
+}

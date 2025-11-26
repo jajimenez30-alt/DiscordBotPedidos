@@ -1,0 +1,70 @@
+// Inicio Descripción del Item
+{
+  "category": "Herramienta",
+  "type": "Cuchillo",
+  "name": "Cuchillo de Despellejamiento",
+  "profession": "Peletero",
+  "variations": [
+    // Agregar por cada variación existente (Level) No olvidar la coma despues de cada cierre de Nivel
+    {
+      "level_name": "Bronce (Lvl 1)",
+      "quality_options": [
+        // Agregar por cada calidad existente (Gris, Verde, Azul). No olvidar la coma despues de cada cierre de calidad, usualmente van a traer 3 cada item
+        {
+          "quality_name": "Común",
+          "level_req": 6,
+          "materials": [
+            { "name": "Barra de Bronce", "quantity": 1 },
+            { "name": "Albura", "quantity": 5 }
+          ]
+        },
+        {
+          "quality_name": "Poco Común",
+          "level_req": 9,
+          "materials": [
+            { "name": "Barra de Bronce", "quantity": 1 },
+            { "name": "Albura", "quantity": 5 }
+          ]
+        },
+        {
+          "quality_name": "Rara",
+          "level_req": 12,
+          "materials": [
+            { "name": "Barra de Bronce", "quantity": 1 },
+            { "name": "Albura", "quantity": 5 },
+            { "name": "Susurro de la estrella rudimentario", "quantity": 1 }
+          ]
+        }
+      ] // Se cierra las calidades
+    }, //Acaba nivel 1 (Usar coma si van a agregar más)
+    {
+      "level_name": "Hierro (Lvl 2)",
+      "quality_options": [
+        {
+          "quality_name": "Común",
+          "level_req": 18,
+          "materials": [
+            { "name": "Barra de Bronce", "quantity": 5 },
+            { "name": "Cuero", "quantity": 1 }
+          ]
+        },
+        {
+          "quality_name": "Poco Común",
+          "level_req": 20,
+          "materials": [
+            { "name": "Barra de Bronce", "quantity": 7 },
+            { "name": "Cuero Reforzado", "quantity": 1 }
+          ]
+        },
+        {
+          "quality_name": "Rara",
+          "level_req": 20,
+          "materials": [
+            { "name": "Barra de Bronce", "quantity": 7 },
+            { "name": "Cuero Reforzado", "quantity": 1 }
+          ]
+        }
+      ]
+    }
+  ]
+}
