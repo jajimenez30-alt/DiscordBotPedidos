@@ -1,4 +1,4 @@
-# bot.py - Estructura Optimizada
+# bot.py - Estructura Optimizada y Corregida
 import os
 import discord
 from discord.ext import commands
@@ -7,6 +7,7 @@ from pymongo import MongoClient
 from bson.objectid import ObjectId
 from discord import SelectOption, SelectMenu, Interaction, app_commands
 from functools import partial
+import re # Necesario para la corrección de get_profession_from_role
 
 # --- 1. CARGAR CREDENCIALES ---
 load_dotenv()
@@ -22,7 +23,7 @@ try:
     usuarios_col = db["Usuario"]
     items_col = db["Item"]
     pedidos_col = db["Pedido"]
-    inventario_col = db["inventario"] # <-- ¡ASEGÚRATE DE QUE EXISTA ESTA LÍNEA!
+    inventario_col = db["inventario"]
     
     print("Conexión a MongoDB exitosa. Colecciones listas.")
     
@@ -45,7 +46,6 @@ def get_unique_categories():
     try:
         # Consulta sincrona.
         categories = items_col.distinct("category") 
-        print(f"DEBUG: Categorías encontradas: {categories}") # <-- Línea de diagnóstico
         return categories
     except Exception as e:
         # Debería capturar y mostrar cualquier error de conexión/colección
@@ -62,20 +62,21 @@ def get_unique_types(category):
         print(f"ERROR DE MONGO (get_types): {e}") 
         return []
 
-def get_item_details(category, item_type):
-    """Obtiene todos los documentos de recetas que coinciden con la categoría y el tipo."""
+# Corregida la firma para reflejar lo que se usa en type_select_callback (2 parámetros)
+# La consulta debe ser ajustada internamente para usar solo 'category' y 'type'
+def get_recipe_names_by_type(category, item_type):
+    """Obtiene nombres de recetas filtrando por Categoría y Tipo (asumiendo que 'type' es el filtro principal)."""
     try:
-        # Consulta síncrona: encuentra todos los documentos que coinciden
-        recipes = items_col.find(
-            {"category": category, "type": item_type},
-            {"name": 1, "variations": 1, "_id": 0, "recipe_id": 1} # Proyectamos solo los campos necesarios
+        recipes = (items_col.find(
+            {"category": category, "type": item_type}, # USANDO SOLO CATEGORY Y TYPE
+            {"name": 1, "variations": 1, "_id": 0, "recipe_id": 1}
         )
-        # Convertimos el cursor de MongoDB a una lista para enviarla fuera del thread
+        .sort("name", 1))
         return list(recipes)
     except Exception as e:
-        print(f"ERROR DE MONGO (get_item_details): {e}") 
-        return []
-    
+            print(f"ERROR DE MONGO (get_recipe_names_by_type): {e}") 
+            return []
+
 def update_inventory(item_name, quantity_change):
     """
     Agrega (positivo) o retira (negativo) una cantidad de un ítem en el inventario.
@@ -106,11 +107,13 @@ def update_inventory(item_name, quantity_change):
 def get_inventory_items(search_query):
     """Obtiene una lista de NOMBRES DE RECETA de la colección maestra 'item' para autocompletado."""
     try:
-        # Buscamos nombres de ítems en la colección maestra 'item'
-        items = items_col.find(
+        # Consulta en la colección de RECETAS (ITEMS)
+        items = (items_col.find(
             {"name": {"$regex": f"^{search_query}", "$options": "i"}},
-            {"name": 1, "_id": 0} # Proyectar solo el nombre
-        ).limit(25)
+            {"name": 1, "_id": 0} 
+        )
+        .sort("name", 1)
+        .limit(25))
         
         return [item['name'] for item in items]
     except Exception as e:
@@ -133,11 +136,12 @@ async def inventory_item_autocomplete(interaction: discord.Interaction, current:
 def get_inventory_stock_names(search_query):
     """Obtiene NOMBRES de ítems que tienen stock de la colección 'inventario'."""
     try:
-        # Consultamos directamente inventario_col y filtramos por stock > 0
-        items = inventario_col.find(
-            {"name": {"$regex": f"^{search_query}", "$options": "i"}, "quantity": {"$gt": 0}},
-            {"name": 1, "_id": 0} 
-        ).limit(25)
+        # Consulta en la colección de INVENTARIO (STOCK)
+        items = (inventario_col.find(
+            {"name": {"$regex": f"^{search_query}", "$options": "i"}, "quantity": {"$gt": 0}}
+        )
+        .sort("name", 1)
+        .limit(25))
         
         return [item['name'] for item in items]
     except Exception as e:
@@ -363,7 +367,12 @@ async def artisan_autocomplete(interaction: discord.Interaction, current: str):
 
     # 2. Determinar el rol de Subdito esperado
     # Ej: Si Maestro es Sastrería, el Subdito es 'Sastre'
-    subdito_role_name = next((key for key, value in {'Sastre': 'Sastrería', 'Peletero': 'Peletería', 'Herrero': 'Herrería', 'Alquimista': 'Alquimia', 'Cocinero': 'Cocina', "Joyero" : "Joyero" }.items() if value == maestro_profession), None)
+    # Utilizando un mapeo más directo y limpio
+    profession_to_role = {
+        'Sastrería': 'Sastre', 'Peletería': 'Peletero', 'Herrería': 'Herrero', 
+        'Alquimia': 'Alquimista', 'Cocina': 'Cocinero', "Joyero" : "Joyero"
+    }
+    subdito_role_name = profession_to_role.get(maestro_profession)
     
     if not subdito_role_name:
         return []
@@ -436,24 +445,13 @@ async def on_ready():
 # Función que se ejecutará cuando el usuario seleccione un Tipo (Paso 3)
 async def type_select_callback(interaction: discord.Interaction):
     selected_type = interaction.data['values'][0]
-    selected_category = interaction.data['custom_id'].split('_')[-1]
+    # Extraemos la categoría que está en el custom_id, después del último '_'
+    selected_category = interaction.data['custom_id'].split('_')[-1] 
     
-    # 1. Obtener todos los ítems (recetas) que coinciden con la Categoría y Tipo
-    def get_recipe_names(cat, item_type):
-        try:
-            # Proyectamos solo el nombre y el recipe_id
-            recipes = items_col.find(
-                {"category": cat, "type": item_type},
-                {"name": 1, "recipe_id": 1, "_id": 0} 
-            )
-            return list(recipes)
-        except Exception as e:
-            print(f"ERROR DE MONGO (get_recipe_names): {e}") 
-            return []
-
+    # 🟢 CORRECCIÓN/AJUSTE: Ahora usa get_recipe_names_by_type que espera 2 parámetros.
     recipe_list = await bot.loop.run_in_executor(
         None,
-        partial(get_recipe_names, selected_category, selected_type)
+        partial(get_recipe_names_by_type, selected_category, selected_type)
     )
 
     if not recipe_list:
@@ -626,10 +624,8 @@ def get_profession_from_role(role_name):
     Simplifica el nombre del rol quitando ' Maestro' para obtener la profesión base.
     Ej: 'Peletero Maestro' -> 'Peletero'
     """
-    # Quitar " Maestro" para obtener el nombre base (ej: "Peletero")
-    profession_base_name = role_name.replace(" Maestro", "").strip() 
-        
-    return profession_base_name
+    # Usamos regex para eliminar " Maestro" del final o simplemente reemplazar
+    return role_name.replace(" Maestro", "").strip()
 
 # --- COMANDO /verpedidos ---
 @bot.tree.command(name="verpedidos", description="Muestra pedidos pendientes (Maestro) o asignados (Subdito).")
@@ -806,7 +802,8 @@ async def my_orders_command(interaction: discord.Interaction):
     status_emoji = {
         "PENDIENTE": "🕒",
         "ASIGNADO": "✍️",
-        "COMPLETADO": "✅",
+        "LISTO PARA RECOGER": "📦", # Agregado para claridad
+        "ENTREGADA": "✅",
         "CANCELADO": "❌"
     }
     
@@ -814,7 +811,7 @@ async def my_orders_command(interaction: discord.Interaction):
         status = order.get('estatus', 'N/A')
         emoji = status_emoji.get(status, '❓')
         
-        # Usamos los últimos 5 caracteres del ObjectId como ID visible
+        # Usamos el ID completo del ObjectId
         order_id_visible = str(order['_id'])
 
         # Mostrar el nombre del artesano si está asignado
@@ -834,16 +831,6 @@ async def my_orders_command(interaction: discord.Interaction):
         
     await interaction.response.send_message(embed=embed, ephemeral=True) # ephemeral=True: Solo el usuario ve sus pedidos
 
-# Define los Roles que serán Jefes de Oficio (¡AJUSTA ESTOS NOMBRES!)
-CHIEF_ROLES = ["Sastre Maestro", "Herrero Maestro", "Peletero Maestro", "Alquimista Maestro", "Cocinero Maestro", "Joyero Maestro"] 
-
-# Manejo de error de roles para /verpedidos
-@view_orders_command.error
-async def view_orders_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.errors.MissingAnyRole):
-        await interaction.response.send_message("🔒 No tienes el rol de Jefe de Oficio para usar este comando.", ephemeral=True)
-
-# --- /asignar ---
 # --- COMANDO /asignar ---
 @bot.tree.command(name="asignar", description="Asigna un pedido a un artesano y cambia el estado.")
 @app_commands.checks.has_any_role(*MANAGEMENT_ROLES) 
@@ -877,8 +864,10 @@ async def assign_order_command(interaction: discord.Interaction, pedido_id: str,
         return
 
     # Validación 2: El artesano DEBE tener el mismo rol de oficio
+    # Note: En el código original el mapeo era de 'Sastre' a 'Sastrería', pero el get_profession_from_role ya lo hace
     if artesano_profession != maestro_profession:
-        await interaction.response.send_message(f"🔒 Error: Solo puedes asignar pedidos a artesanos que tengan el rol de **{maestro_profession.replace('ería', '')}**.", ephemeral=True)
+        # Aquí ajustamos el mensaje para que sea más claro qué rol se espera (Sastre, Herrero, etc.)
+        await interaction.response.send_message(f"🔒 Error: Solo puedes asignar pedidos a artesanos que tengan el rol de **{maestro_profession}**.", ephemeral=True)
         return
         
     # --- FUNCIÓN ANIDADA PARA MONGO DB ---
@@ -943,7 +932,7 @@ async def assign_order_command(interaction: discord.Interaction, pedido_id: str,
 
 # --- COMANDO /recoger ---
 @bot.tree.command(name="recoger", description="Marca tu pedido como Entregado, confirmando la recepción del ítem.")
-@app_commands.describe(pedido_id="El ID corto (primeros 8 caracteres) del pedido que deseas marcar como Entregado.")
+@app_commands.describe(pedido_id="El ID corto (primeros 24 caracteres) del pedido que deseas marcar como Entregado.") # Corregida la descripción
 async def pickup_order_command(interaction: discord.Interaction, pedido_id: str):
     pedido_id = pedido_id.strip()    
     user_id_str = str(interaction.user.id)
@@ -952,11 +941,14 @@ async def pickup_order_command(interaction: discord.Interaction, pedido_id: str)
         from bson.objectid import ObjectId
         
         # Buscamos el pedido, verificando que el usuario sea el solicitante y que el estado sea 'LISTO PARA RECOGER'
-        order_doc = pedidos_col.find_one({
-            "_id": ObjectId(pedido_id),
-            "solicitante_id": user_id_str,
-            "estatus": "LISTO PARA RECOGER"
-        })
+        try:
+            order_doc = pedidos_col.find_one({
+                "_id": ObjectId(pedido_id),
+                "solicitante_id": user_id_str,
+                "estatus": "LISTO PARA RECOGER"
+            })
+        except Exception:
+            return "INVALID_ID"
         
         if not order_doc:
             return "NOT_FOUND"
@@ -969,6 +961,13 @@ async def pickup_order_command(interaction: discord.Interaction, pedido_id: str)
         return order_doc['item_name']
 
     result_name = await bot.loop.run_in_executor(None, update_status)
+
+    if result_name == "INVALID_ID":
+        await interaction.response.send_message(
+            f"❌ Error: El ID del pedido no tiene el formato correcto (24 caracteres).",
+            ephemeral=True
+        )
+        return
 
     if result_name == "NOT_FOUND":
         await interaction.response.send_message(
@@ -1103,29 +1102,49 @@ async def complete_order_command(interaction: discord.Interaction, pedido_id: st
 # --- COMANDO /inventarioagregar ---
 @bot.tree.command(name="inventarioagregar", description="Agrega nuevos ítems o aumenta la cantidad de un ítem existente.")
 @app_commands.describe(
-    item_name="Nombre del ítem (solo se muestran ítems con stock).",
+    item_name="Nombre del ítem (se muestran todas las recetas).",
     cantidad="Cantidad a agregar (número entero positivo)."
 )
-@app_commands.autocomplete(item_name=inventory_stock_autocomplete)
+@app_commands.autocomplete(item_name=inventory_item_autocomplete) # 🟢 CORRECCIÓN: Usa el autocompletado de TODAS las recetas
 @app_commands.checks.has_any_role(*MANAGEMENT_ROLES)
 async def add_inventory_command(interaction: discord.Interaction, item_name: str, cantidad: int):
     
     await interaction.response.defer(ephemeral=True)
     item_name_stripped = item_name.strip()
 
-    # NOTE: NO VALIDAMOS CONTRA items_col, SOLO ACEPTAMOS LO QUE ESTÁ EN INVENTARIO
-    
+    # 1. Validaciones
     if cantidad <= 0:
         await interaction.followup.send("❌ Error: La cantidad debe ser mayor a cero para agregar.", ephemeral=True)
         return
 
+    # 2. Ejecutar la actualización en un hilo de fondo (cantidad positiva)
+    result = await bot.loop.run_in_executor(
+        None,
+        partial(update_inventory, item_name_stripped, cantidad) # CANTIDAD POSITIVA
+    )
+    
+    if result == "ERROR":
+        await interaction.followup.send("❌ Error: Fallo al actualizar el inventario.", ephemeral=True)
+        return
+
+    # 3. Confirmar la cantidad final
+    final_doc = inventario_col.find_one({"name": item_name_stripped})
+    final_quantity = final_doc.get("quantity", cantidad) # Usar 'cantidad' como fallback
+
+    await interaction.followup.send(
+        f"✅ Inventario Actualizado:\n"
+        f"Se agregaron **{cantidad}** de **{item_name_stripped}**.\n"
+        f"Cantidad total: **{final_quantity}**.",
+        ephemeral=False
+    )
+
 # --- COMANDO /inventarioretirar ---
 @bot.tree.command(name="inventarioretirar", description="Retira una cantidad de un ítem existente del inventario.")
 @app_commands.describe(
-    item_name="Nombre del ítem (se autocompleta si existe).",
+    item_name="Nombre del ítem (solo se muestran ítems con stock).",
     cantidad="Cantidad a retirar (debe ser un número entero positivo)."
 )
-@app_commands.autocomplete(item_name=inventory_stock_autocomplete) # Usa el mismo autocompletado
+@app_commands.autocomplete(item_name=inventory_stock_autocomplete) # Usa el autocompletado de ítems con stock
 @app_commands.checks.has_any_role(*MANAGEMENT_ROLES)
 async def remove_inventory_command(interaction: discord.Interaction, item_name: str, cantidad: int):
     
@@ -1222,7 +1241,7 @@ async def view_inventory_error(interaction: discord.Interaction, error: app_comm
     item_name="Ítem del inventario para actualizar.",
     cantidad="El número TOTAL que tiene el inventario ahora."
 )
-@app_commands.autocomplete(item_name=inventory_stock_autocomplete)
+@app_commands.autocomplete(item_name=inventory_item_autocomplete) # 🟢 CORRECCIÓN: Usa el autocompletado de TODAS las recetas
 @app_commands.checks.has_any_role(*MANAGEMENT_ROLES)
 async def set_inventory_command(interaction: discord.Interaction, item_name: str, cantidad: int):
     
