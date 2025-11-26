@@ -633,35 +633,61 @@ def get_profession_from_role(role_name):
 async def view_orders_command(interaction: discord.Interaction):
     
     is_maestro = False
+    is_king = False
     chief_profession = None
+    worker_role_found = None
     
     # 1. Determinar el rol y el oficio base
     for role in interaction.user.roles:
-        if role.name in MANAGEMENT_ROLES:
-            # Es un Maestro si el nombre del rol contiene " Maestro"
+        # Verificar si es Rey
+        if role.name == "Rey":
+            is_king = True
+        
+        # Determinar el oficio y la jerarquía (ignora el rol Rey aquí)
+        if role.name in MANAGEMENT_ROLES and role.name != "Rey":
+            worker_role_found = role.name
+            
             if " Maestro" in role.name:
                 is_maestro = True
             
+            # Obtenemos la profesión base (Sastrería, Herrería, etc.)
             chief_profession = get_profession_from_role(role.name)
+            
+            # Si se encuentra un rol de oficio (Maestro o Subdito), terminamos
             if chief_profession:
-                break
+                break 
 
+    # 🟢 CORRECCIÓN CLAVE: Si es Rey pero no tiene un oficio asociado, salimos.
     if not chief_profession:
+        if is_king:
+            await interaction.response.send_message("❌ Error: Como Rey, debes tener un rol de oficio (Maestro o Subdito) para poder ver listas de pedidos específicas.", ephemeral=True)
+            return
+        
+        # Para otros roles de MANAGEMENT_ROLES que no son oficios definidos (lo cual es improbable pero seguro)
         await interaction.response.send_message("❌ Error: No se pudo determinar tu oficio base (Sastrería, Herrería, etc.) a partir de tu rol.", ephemeral=True)
         return
 
     # 2. Definir la consulta a MongoDB
-    if is_maestro:
+
+    # REGLA: Si el usuario es Rey Y tiene un rol de Subdito (no Maestro), actúa como Subdito.
+    # El rol de Subdito no contiene " Maestro".
+    is_subdito_con_trabajo = is_king and (worker_role_found is not None) and (" Maestro" not in worker_role_found)
+
+    if is_maestro and not is_subdito_con_trabajo: # Es Maestro, o Maestro que también es Rey
         # MAESTRO: Ver todos los pedidos pendientes de su profesión
         query_type = 'profession'
         identifier = chief_profession
         list_title = f"👑 Pedidos PENDIENTES de {chief_profession}"
         no_orders_msg = f"✅ ¡No hay pedidos pendientes para el oficio **{chief_profession}**!"
-    else:
-        # SUBDITO/TRABAJADOR: Ver pedidos asignados a su ID
+    
+    else: # Esto cubre a los Subditos normales Y al Rey que tiene rol de Subdito
+        # SUBDITO/TRABAJADOR o REY ASIGNADO: Ver pedidos asignados a su ID
+        
+        profession_display = chief_profession if chief_profession else "General"
+        
         query_type = 'worker_id'
         identifier = interaction.user.id
-        list_title = f"✍️ Pedidos ASIGNADOS a ti ({chief_profession})"
+        list_title = f"✍️ Pedidos ASIGNADOS a ti ({profession_display})"
         no_orders_msg = "✅ ¡No tienes pedidos asignados en este momento!"
 
 
