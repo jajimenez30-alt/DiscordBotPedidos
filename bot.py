@@ -39,6 +39,35 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # ==============================================================================
 # SECCIÓN 4: FUNCIONES SÍNCRONAS PARA MONGO (EJECUTADAS EN HILOS)
 # ==============================================================================
+def get_inventory_all_names(search_query):
+    """Obtiene NOMBRES de ítems de la colección 'inventario', incluyendo stock 0."""
+    # 🛠️ AJUSTE DE SEGURIDAD: Usar la referencia de la base de datos global 'db'
+    try:
+        # Acceder a la colección a través del objeto DB global
+        local_inventario_col = db["inventario"] 
+        
+        items = local_inventario_col.find( # <-- USAR REFERENCIA LOCAL
+            {"name": {"$regex": f"^{search_query}", "$options": "i"}},
+            {"name": 1, "_id": 0} 
+        ).limit(25)
+        
+        return [item['name'] for item in items]
+    except Exception as e:
+        print(f"ERROR CRÍTICO DE HILO/MONGO (get_inventory_all_names): {e}") 
+        # Devuelve una lista vacía para evitar que Discord falle
+        return []
+
+async def inventory_all_autocomplete(interaction: discord.Interaction, current: str):
+    # Execute the database search synchronously in a thread
+    item_names = await bot.loop.run_in_executor(
+        None,
+        partial(get_inventory_all_names, current)
+    )
+    
+    return [
+        app_commands.Choice(name=name, value=name)
+        for name in item_names
+    ]
 
 def get_unique_categories():
     """Consulta MongoDB síncronamente para obtener categorías únicas."""
@@ -312,16 +341,21 @@ def get_user_orders(user_id):
 
 def get_managed_orders(query_type, identifier):
     """
-    Obtiene pedidos según el rol:
-    - Si query_type='profession': todos los PENDIENTES de ese oficio (para Maestros).
-    - Si query_type='worker_id': todos los ASIGNADOS a ese ID (para Subditos).
+    Obtiene pedidos según el rol. Si identifier es una LISTA, usa $in.
     """
     try:
         if query_type == 'profession':
-            # Maestros: ver todos los pedidos PENDIENTES de su oficio
+            # 🛠️ LÓGICA DE BÚSQUEDA DEL OFICIO
+            if isinstance(identifier, list):
+                # Si identifier es una lista (Herrero), usa $in para buscar múltiples oficios
+                profession_query = {"$in": identifier}
+            else:
+                # Si es una cadena (Sastrería, Peletería), usa la búsqueda normal
+                profession_query = identifier
+
             query = {
-                "estatus": {"$ne": "ENTREGADA"}, # El operador $ne significa "no igual a"
-                "oficio_requerido": identifier
+                "estatus": {"$ne": "ENTREGADA"},
+                "oficio_requerido": profession_query # <-- CAMBIO APLICADO AQUÍ
             }
         elif query_type == 'worker_id':
             # Subditos: ver todos los pedidos ASIGNADOS a ellos
@@ -362,21 +396,38 @@ async def artisan_autocomplete(interaction: discord.Interaction, current: str):
         return [] # Si el maestro no tiene un rol válido, no ofrecemos sugerencias
 
     # 2. Determinar el rol de Subdito esperado
-    # Ej: Si Maestro es Sastrería, el Subdito es 'Sastre'
-    subdito_role_name = next((key for key, value in {'Sastre': 'Sastrería', 'Peletero': 'Peletería', 'Herrero': 'Herrería', 'Alquimista': 'Alquimia', 'Cocinero': 'Cocina'}.items() if value == maestro_profession), None)
-    
+    # 🛠️ CORRECCIÓN: Manejar el caso del Herrero (Lista)
+    if isinstance(maestro_profession, list): # Si es una lista, el rol es Herrero
+        subdito_role_name = "Herrero" 
+    else:
+        # Mapeo Oficio BD (string) -> Rol Subdito (string)
+        subdito_map = {
+            "Peletería": "Peletero", "Sastrería": "Sastre", "Alquimia": "Alquimista", 
+            "Cocina": "Cocinero", "Joyería": "Joyero"
+        }
+        # Obtiene el rol base (ej: 'Sastre') del oficio (ej: 'Sastrería')
+        subdito_role_name = subdito_map.get(maestro_profession) 
+
     if not subdito_role_name:
-        return []
+        return [] # El oficio no tiene un rol de Subdito mapeado
 
     # 3. Filtrar los miembros del servidor
     available_members = []
     
-    # Itera sobre todos los miembros del servidor (Discord no lo hace automáticamente, debemos iterar)
+    # 🛠️ AJUSTE: Define el rol de Maestro para el oficio
+    maestro_role_name = f"{subdito_role_name} Maestro" 
+
+    # Itera sobre todos los miembros del servidor
     for member in interaction.guild.members:
-        # Verifica si el miembro tiene el rol de Subdito Y su nombre/apodo coincide con la entrada actual
-        member_has_role = discord.utils.get(member.roles, name=subdito_role_name)
         
-        if member_has_role and current.lower() in member.display_name.lower():
+        # Condición 1: El miembro tiene el rol de Subdito (ej. "Herrero")
+        member_is_subdito = discord.utils.get(member.roles, name=subdito_role_name)
+        
+        # Condición 2: El miembro tiene el rol de Maestro (ej. "Herrero Maestro")
+        member_is_maestro = discord.utils.get(member.roles, name=maestro_role_name)
+        
+        # Filtro final: Si el miembro es Subdito O Maestro del mismo oficio
+        if (member_is_subdito or member_is_maestro) and current.lower() in member.display_name.lower():
             available_members.append(app_commands.Choice(name=member.display_name, value=str(member.id)))
             
     # Discord solo permite un máximo de 25 opciones de autocompletado
@@ -445,7 +496,8 @@ async def type_select_callback(interaction: discord.Interaction):
             recipes = items_col.find(
                 {"category": cat, "type": item_type},
                 {"name": 1, "recipe_id": 1, "_id": 0} 
-            )
+            ).sort("name", 1)
+            
             return list(recipes)
         except Exception as e:
             print(f"ERROR DE MONGO (get_recipe_names): {e}") 
@@ -498,6 +550,7 @@ async def category_select_callback(interaction: discord.Interaction):
         None,
         partial(get_unique_types, selected_category)
     )
+    types.sort()
     
     if not types:
         await interaction.response.edit_message(content=f"❌ Error: No se encontraron Tipos (Placas/Tela) para la categoría '{selected_category}'. Verifica tus datos en MongoDB.", view=None)
@@ -617,19 +670,38 @@ class OrderModal(discord.ui.Modal, title='Detalles Finales del Pedido'):
 
 # --- CONFIGURACIÓN DE ROLES DE GESTIÓN ---
 MANAGEMENT_ROLES = [
-    "Sastre Maestro", "Peletero Maestro", "Herrero Maestro", "Alquimista Maestro", "Cocinero Maestro", "Joyero Maestro", "Joyero",
-    "Sastre", "Peletero", "Herrero", "Alquimista", "Cocinero"
+    "Sastre Maestro", "Peletero Maestro", "Herrero Maestro", "Armero Maestro", "Alquimista Maestro", "Cocinero Maestro", "Joyero Maestro",
+    "Sastre", "Peletero", "Herrero", "Armero", "Alquimista", "Cocinero", "Joyero"
 ]
 
 def get_profession_from_role(role_name):
     """
-    Simplifica el nombre del rol quitando ' Maestro' para obtener la profesión base.
-    Ej: 'Peletero Maestro' -> 'Peletero'
+    Traduce el Rol de Discord al nombre del oficio en BD.
+    Si el rol es Herrero, devuelve una LISTA de oficios (Armas y Armaduras).
     """
-    # Quitar " Maestro" para obtener el nombre base (ej: "Peletero")
-    profession_base_name = role_name.replace(" Maestro", "").strip() 
+    role_to_db_profession = {
+        # --- OFICIOS REGULARES (Valor = string) ---
+        "Peletero": "Peletería",
+        "Peletero Maestro": "Peletería",
         
-    return profession_base_name
+        "Sastre": "Sastrería",
+        "Sastre Maestro": "Sastrería",
+        
+        "Alquimista": "Alquimia", 
+        "Alquimista Maestro": "Alquimia",
+        
+        "Cocinero": "Cocina",
+        "Cocinero Maestro": "Cocina",
+        
+        "Joyero": "Joyería",
+        "Joyero Maestro": "Joyería",
+        
+        # 🛠️ HERRERO: Múltiples Oficios (Valor = list)
+        "Herrero": ["Forja de armas", "Forja de armaduras"],
+        "Herrero Maestro": ["Forja de armas", "Forja de armaduras"],
+    }
+    
+    return role_to_db_profession.get(role_name)
 
 # --- COMANDO /verpedidos ---
 @bot.tree.command(name="verpedidos", description="Muestra pedidos pendientes (Maestro) o asignados (Subdito).")
@@ -658,9 +730,17 @@ async def view_orders_command(interaction: discord.Interaction):
     if is_maestro:
         # MAESTRO: Ver todos los pedidos pendientes de su profesión
         query_type = 'profession'
-        identifier = chief_profession
-        list_title = f"👑 Pedidos PENDIENTES de {chief_profession}"
-        no_orders_msg = f"✅ ¡No hay pedidos pendientes para el oficio **{chief_profession}**!"
+        
+        # 🛠️ LÓGICA FINAL PARA EL HERRERO Y MULTI-OFICIOS
+        if isinstance(chief_profession, list): # Detecta si es una lista (Herrero)
+            identifier = chief_profession # El identifier ahora es la lista de oficios
+            chief_profession_display = "Forja (Armas y Armaduras)" # Nombre a mostrar al usuario
+        else:
+            identifier = chief_profession # Para Sastre, Peletero, etc., sigue siendo la cadena
+            chief_profession_display = chief_profession # Nombre a mostrar al usuario
+            
+        list_title = f"👑 Pedidos PENDIENTES de {chief_profession_display}"
+        no_orders_msg = f"✅ ¡No hay pedidos pendientes para el oficio **{chief_profession_display}**!"
     else:
         # SUBDITO/TRABAJADOR: Ver pedidos asignados a su ID
         query_type = 'worker_id'
@@ -727,6 +807,7 @@ async def view_orders_command(interaction: discord.Interaction):
 @view_orders_command.error
 async def view_orders_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.errors.MissingAnyRole):
+        # 🛠️ CORRECCIÓN: Cambiar el mensaje de error para ser consistente
         await interaction.response.send_message("🔒 No tienes un rol de gestión de oficios para usar este comando.", ephemeral=True)
 
 # --- /Ping ---
@@ -834,16 +915,6 @@ async def my_orders_command(interaction: discord.Interaction):
         
     await interaction.response.send_message(embed=embed, ephemeral=True) # ephemeral=True: Solo el usuario ve sus pedidos
 
-# Define los Roles que serán Jefes de Oficio (¡AJUSTA ESTOS NOMBRES!)
-CHIEF_ROLES = ["Sastre Maestro", "Herrero Maestro", "Peletero Maestro", "Alquimista Maestro", "Cocinero Maestro"] 
-
-# Manejo de error de roles para /verpedidos
-@view_orders_command.error
-async def view_orders_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.errors.MissingAnyRole):
-        await interaction.response.send_message("🔒 No tienes el rol de Jefe de Oficio para usar este comando.", ephemeral=True)
-
-# --- /asignar ---
 # --- COMANDO /asignar ---
 @bot.tree.command(name="asignar", description="Asigna un pedido a un artesano y cambia el estado.")
 @app_commands.checks.has_any_role(*MANAGEMENT_ROLES) 
@@ -869,30 +940,43 @@ async def assign_order_command(interaction: discord.Interaction, pedido_id: str,
             maestro_profession = get_profession_from_role(role.name)
             break
             
-    artesano_profession = get_profession_from_role(next((r.name for r in member_to_assign.roles if r.name in MANAGEMENT_ROLES), None))
+    # VALIDACIÓN DEL ROL DEL ARTESANO ASIGNADO
+    # Si el maestro es Herrero, el artesano asignado DEBE tener el rol "Herrero".
+    if isinstance(maestro_profession, list): 
+        # Si el Maestro es Herrero (lista de oficios), el Subdito debe tener el rol "Herrero" o "Herrero Maestro"
+        required_role_name = "Herrero"
+        required_role_maestro = "Herrero Maestro"
+    else:
+        # Si es un solo oficio (Sastrería), el Subdito debe tener el rol "Sastre"
+        # Usamos el mapeo inverso de la lógica del autocompletado para encontrar el nombre del rol simple
+        role_map = {"Peletería": "Peletero", "Sastrería": "Sastre", "Alquimia": "Alquimista", "Cocina": "Cocinero", "Joyería": "Joyero"}
+        required_role_name = role_map.get(maestro_profession)
+        required_role_maestro = f"{required_role_name} Maestro"
 
-    # Validación 1: El Maestro debe tener un oficio válido
-    if not maestro_profession:
-        await interaction.response.send_message("❌ Error: No se pudo determinar tu oficio para asignar pedidos.", ephemeral=True)
-        return
 
-    # Validación 2: El artesano DEBE tener el mismo rol de oficio
-    if artesano_profession != maestro_profession:
-        await interaction.response.send_message(f"🔒 Error: Solo puedes asignar pedidos a artesanos que tengan el rol de **{maestro_profession.replace('ería', '')}**.", ephemeral=True)
+    # Validación 2: El artesano DEBE tener el rol de oficio correcto
+    if not any(r.name in [required_role_name, required_role_maestro] for r in member_to_assign.roles):
+        await interaction.response.send_message(f"🔒 Error: Solo puedes asignar pedidos a artesanos que tengan el rol **{required_role_name}**.", ephemeral=True)
         return
         
     # --- FUNCIÓN ANIDADA PARA MONGO DB ---
     def update_assignment():
         from bson.objectid import ObjectId
         
+        # 🛠️ AJUSTE PARA EL QUERY DE MONGO: Crear el identificador de MongoDB
+        if isinstance(maestro_profession, list):
+            mongo_identifier = {"$in": maestro_profession} # { "$in": ["Forja de armas", "Forja de armaduras"] }
+        else:
+            mongo_identifier = maestro_profession
+        
         # Intentamos encontrar el pedido usando el ObjectId COMPLETO.
         try:
             order_doc = pedidos_col.find_one({
-                "_id": ObjectId(pedido_id), # <- Funciona con el ID de 24 caracteres
-                "oficio_requerido": maestro_profession
+                "_id": ObjectId(pedido_id), 
+                "oficio_requerido": mongo_identifier # <- ¡USAR EL IDENTIFICADOR CORREGIDO!
             })
         except Exception:
-            return "INVALID_ID" # Captura el error InvalidId si el ID es muy corto
+            return "INVALID_ID"
             
         if not order_doc:
             return "NOT_FOUND"
@@ -1101,23 +1185,46 @@ async def complete_order_command(interaction: discord.Interaction, pedido_id: st
         # La interacción ya fue respondida, así que solo registramos el error
 
 # --- COMANDO /inventarioagregar ---
+# --- COMANDO /inventarioagregar ---
 @bot.tree.command(name="inventarioagregar", description="Agrega nuevos ítems o aumenta la cantidad de un ítem existente.")
 @app_commands.describe(
-    item_name="Nombre del ítem (solo se muestran ítems con stock).",
+    item_name="Nombre del ítem (debe existir en el inventario, incluso si está en 0).",
     cantidad="Cantidad a agregar (número entero positivo)."
 )
-@app_commands.autocomplete(item_name=inventory_stock_autocomplete)
+@app_commands.autocomplete(item_name=inventory_all_autocomplete) # <-- USA EL AUTOCOMPLETADO DE TODO EL INVENTARIO
 @app_commands.checks.has_any_role(*MANAGEMENT_ROLES)
 async def add_inventory_command(interaction: discord.Interaction, item_name: str, cantidad: int):
     
     await interaction.response.defer(ephemeral=True)
     item_name_stripped = item_name.strip()
 
-    # NOTE: NO VALIDAMOS CONTRA items_col, SOLO ACEPTAMOS LO QUE ESTÁ EN INVENTARIO
+    # La validación implícita es que el nombre proviene del autocompletado (ítems existentes)
     
     if cantidad <= 0:
         await interaction.followup.send("❌ Error: La cantidad debe ser mayor a cero para agregar.", ephemeral=True)
         return
+
+    # 🛠️ LÓGICA DE ACTUALIZACIÓN (Suma el valor)
+    result = await bot.loop.run_in_executor(
+        None,
+        partial(update_inventory, item_name_stripped, cantidad) 
+    )
+
+    if result == "ERROR":
+        await interaction.followup.send("❌ Error: Fallo al agregar el ítem al inventario.", ephemeral=True)
+        return
+    
+    # 🟢 Respuesta de éxito: Mostrar la nueva cantidad
+    final_doc = inventario_col.find_one({"name": item_name_stripped})
+    # Obtenemos la cantidad final. Si por algún error no la encuentra, mostramos la cantidad que se intentó agregar.
+    final_quantity = final_doc.get("quantity", cantidad) 
+
+    await interaction.followup.send(
+        f"✅ Inventario Actualizado:\n"
+        f"Se agregaron **{cantidad}** de **{item_name_stripped}**.\n"
+        f"Cantidad total: **{final_quantity}**.",
+        ephemeral=False
+    )
 
 # --- COMANDO /inventarioretirar ---
 @bot.tree.command(name="inventarioretirar", description="Retira una cantidad de un ítem existente del inventario.")
